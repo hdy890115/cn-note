@@ -56,6 +56,7 @@ textarea{resize:vertical}
 .ln{display:grid;min-width:0}
 .ln .zh{font-size:19px;line-height:1.5}
 .cover .ln .zh,.cover .ln .py{filter:blur(7px)}
+.dlg li.now{outline:2px solid var(--jade);outline-offset:4px;border-radius:6px}
 .hide-py .study .py{filter:blur(6px)} .hide-ko .study .ko{filter:blur(6px)}
 .fw{font-size:22px;font-weight:700}
 .sent .zh{font-size:21px;line-height:1.45}
@@ -160,7 +161,7 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
 
   function sceneHtml(d){
     const sc = d.scene || {}; const me = sc.me || "B"; const roles = sc.roles || {};
-    return `<article class="card"><div class="top"><div class="tags"><span class="tag j">오늘의 상황 대화</span><span class="tag">${d.packDay}일차</span></div><div class="row" style="flex-wrap:nowrap"><button class="say" data-cover>${S.cover?"내 대사 보이기":"역할 연습"}</button><button class="say" data-all>▶ 전체</button></div></div>
+    return `<article class="card"><div class="top"><div class="tags"><span class="tag j">오늘의 상황 대화</span><span class="tag">${d.packDay}일차</span></div><div class="row" style="flex-wrap:nowrap"><button class="say" data-cover>${S.cover?"내 대사 보이기":"역할 연습"}</button><button class="say" data-shadow>${S.shadowing?"■ 멈추기":"🔁 쉐도잉"}</button><button class="say" data-all>▶ 전체</button></div></div>
       <div class="fw zh">${esc(sc.title)}</div><div class="sub">${esc(sc.situation||"")}</div>
       <ul class="dlg">${(sc.lines||[]).map((x,i) => `<li class="${x.who===me?"me":""}${x.who===me&&S.cover&&!S.peek[i]?" cover":""}" data-ln="${i}"><span class="who">${esc(roles[x.who]||x.who)}</span><span class="ln"><span class="zh">${hl(x.zh, sc.keys)}</span><span class="py">${esc(x.pinyin||"")}</span><span class="ko">${esc(x.ko||"")}</span></span><button class="say" data-say="${esc(x.zh)}" aria-label="듣기">▶</button></li>`).join("")}</ul>
       <div class="sub">${S.cover ? "가려진 내 대사를 한국어 뜻을 보고 먼저 말해 본 뒤, 줄을 누르면 보여요." : "‘역할 연습’을 누르면 내 대사가 가려져요."}</div>
@@ -200,9 +201,84 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
       ${sceneHtml(d)}
       <h2>핵심 표현 · ${it.length}개</h2>${it.map(itemHtml).join("")}
       <h2>퀴즈 · ${(d.quiz||[]).length}개</h2><div class="sub">오프라인이라 AI 채점 대신 정답을 보고 스스로 채점해요. 내보낸 기록은 온라인 노트에서 약점 분석에 쓰여요.</div>${quizHtml(d, r)}
-      <article class="card" style="border-left:4px solid var(--jade)"><b>롤플레이 미션</b><div style="font-size:14px">${esc(d.mission||"")}</div><textarea id="mission" class="zh" rows="3" placeholder="중국어로 써 보세요">${esc(r.mission||"")}</textarea><div class="row"><button class="btn" data-msave>저장</button><span class="sub">온라인에 연결되면 기록을 가져와서 문법 점검을 받을 수 있어요.</span></div></article>`;
+      <article class="card" style="border-left:4px solid var(--jade)"><b>롤플레이 미션</b><div style="font-size:14px">${esc(d.mission||"")}</div><textarea id="mission" class="zh" rows="3" placeholder="중국어로 써 보세요">${esc(r.mission||"")}</textarea><div class="row"><button class="btn" data-msave>저장</button><span class="sub">온라인에 연결되면 기록을 가져와서 문법 점검을 받을 수 있어요.</span></div></article>
+      <h2>회화 연습</h2><div id="extra"></div>`;
+    renderExtra();
     document.body.classList.toggle("hide-py", !!S.opts.py); document.body.classList.toggle("hide-ko", !!S.opts.ko);
   }
+  // ================= 회화 연습 (오프라인) =================
+  const zhVoices = () => { try{ return speechSynthesis.getVoices().filter(v => /^zh[-_](CN|Hans)/i.test(v.lang)); }catch(e){ return []; } };
+  const utter = (t, o) => { const u = new SpeechSynthesisUtterance(t); u.lang = "zh-CN"; u.rate = (o && o.rate) || S.opts.rate; const v = (o && o.voice) || zhVoices()[0]; if (v) u.voice = v; return u; };
+  // 쉐도잉
+  function stopShadow(){ S.shadowing = false; clearTimeout(S.shT); try{ speechSynthesis.cancel(); }catch(e){} document.querySelectorAll(".dlg li.now").forEach(x => x.classList.remove("now")); }
+  function runShadow(i){
+    const lines = D().scene?.lines || []; if (!S.shadowing) return;
+    if (i >= lines.length){ stopShadow(); renderDay(); say("쉐도잉 한 바퀴 끝!"); return; }
+    document.querySelectorAll(".dlg li.now").forEach(x => x.classList.remove("now"));
+    const li = document.querySelector(`.dlg li[data-ln="${i}"]`); if (li){ li.classList.add("now"); li.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    const u = utter(lines[i].zh); const t0 = Date.now();
+    u.onend = () => { S.shT = setTimeout(() => runShadow(i + 1), Math.max(1200, (Date.now() - t0) * 1.15 + 400)); };
+    u.onerror = () => stopShadow();
+    try{ speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){ stopShadow(); }
+  }
+  // 성조 듣기 훈련
+  const TM = { a: "āáǎà", e: "ēéěè", i: "īíǐì", o: "ōóǒò", u: "ūúǔù", "ü": "ǖǘǚǜ" };
+  const MK = {}; Object.entries(TM).forEach(([b, ms]) => Array.from(ms).forEach((m, k) => MK[m] = [b, k + 1]));
+  function toneVariants(py){ const ch = Array.from(py); const pos = ch.map((c, i) => MK[c] ? i : -1).filter(i => i >= 0); if (!pos.length) return []; const out = new Set(); for (let n = 0; n < 30 && out.size < 2; n++){ const c2 = ch.slice(); const p = pos[Math.floor(Math.random() * pos.length)]; const [b, t] = MK[c2[p]]; let nt = t; while (nt === t) nt = 1 + Math.floor(Math.random() * 4); c2[p] = TM[b][nt - 1]; const v = c2.join(""); if (v !== py) out.add(v); } return [...out]; }
+  function toneSet(){
+    const pool = []; const seen = new Set();
+    (P().days || []).filter(d => d.packDay <= S.day).reverse().forEach(d => (d.items || []).forEach(it => (it.words || []).forEach(w => { if (w.w && w.pinyin && !seen.has(w.w) && /[一-鿿]/.test(w.w) && !/[一不]/.test(w.w) && toneVariants(w.pinyin).length >= 2){ seen.add(w.w); pool.push(w); } })));
+    const set = pool.slice(0, 30).sort(() => Math.random() - .5).slice(0, 10).map(w => ({ w: w.w, py: w.pinyin, ko: w.ko, opts: [w.pinyin, ...toneVariants(w.pinyin)].sort(() => Math.random() - .5) }));
+    S.tone = { set, i: 0, right: 0, picked: null };
+  }
+  function playTone(){ const it = S.tone?.set[S.tone.i]; if (!it) return; const vs = zhVoices(); try{ speechSynthesis.cancel(); speechSynthesis.speak(utter(it.w, { rate: 0.8, voice: vs.length ? vs[Math.floor(Math.random() * vs.length)] : null })); }catch(e){} }
+  function toneHtml(){
+    const t = S.tone;
+    if (!t) return `<article class="card"><b>🎧 성조 듣기 훈련 <span class="sub">3분 · 주 2~3회</span></b><div class="sub">단어를 듣고 맞는 성조를 골라요. 귀로 구별하는 힘이 늘면 말할 때 성조도 좋아져요.</div><div><button class="btn" data-tone-start>시작 (10문제)</button></div></article>`;
+    if (t.i >= t.set.length) return `<article class="card"><b>🎧 성조 듣기 훈련</b><div class="fw">${t.right}/${t.set.length}</div><div><button class="btn" data-tone-start>다시 하기</button></div></article>`;
+    const it = t.set[t.i];
+    return `<article class="card"><b>🎧 성조 듣기 훈련 <span class="sub">${t.i + 1}/${t.set.length}</span></b><div class="row"><button class="btn" data-tone-play>▶ 다시 듣기</button>${t.picked ? `<span class="zh" style="font-size:22px">${esc(it.w)}</span><span class="sub">${esc(it.ko || "")}</span>` : ""}</div><div class="choices">${it.opts.map(o => `<button class="chip" style="${t.picked ? (o === it.py ? "background:var(--ok);color:var(--sheet)" : o === t.picked ? "background:var(--bad);color:var(--sheet)" : "") : ""}" data-tone-pick="${esc(o)}" ${t.picked ? "disabled" : ""}>${esc(o)}</button>`).join("")}</div>${t.picked ? `<div><button class="btn" data-tone-next>다음 →</button></div>` : ""}</article>`;
+  }
+  // 표현 복습 카드 (간격 반복)
+  const BOX = [0, 1, 3, 7, 14, 30, 60];
+  function dueCards(){
+    const st = store.get("srs", {}); const now = Date.now(); const all = [];
+    packs().forEach(p => (p.days || []).forEach(d => { const opened = p.id !== P().id || d.packDay < S.day; if (!opened) return; (d.items || []).forEach(i => all.push({ id: i.id, zh: i.sentence, py: i.pinyin, ko: i.ko })); }));
+    const due = all.filter(c => st[c.id] && st[c.id].due <= now).sort((a, b) => st[a.id].due - st[b.id].due);
+    const fresh = all.filter(c => !st[c.id]).slice(0, 5);
+    return due.concat(fresh).slice(0, 12);
+  }
+  function srsHtml(){
+    const q = S.srsQ;
+    if (!q){ const n = dueCards().length; return `<article class="card"><b>🗂 표현 복습 카드 <span class="sub">5분</span></b><div class="sub">한국어를 보고 먼저 중국어로 소리 내어 말한 뒤 뒤집어요. 잊어버릴 때쯤 다시 나와요.</div><div><button class="btn" data-srs-start ${n ? "" : "disabled"}>${n ? `오늘 복습 ${n}장 시작` : "오늘 복습할 카드가 없어요"}</button></div></article>`; }
+    if (q.i >= q.list.length) return `<article class="card"><b>🗂 표현 복습 카드</b><div>오늘 복습 끝! ${q.list.length}장을 봤어요.</div></article>`;
+    const c = q.list[q.i];
+    return `<article class="card"><b>🗂 표현 복습 카드 <span class="sub">${q.i + 1}/${q.list.length}</span></b><div style="font-size:17px">${esc(c.ko)}</div>${q.flip ? `<div class="sent"><div class="zh">${esc(c.zh)}</div><div class="py">${esc(c.py || "")}</div></div><div><button class="say" data-say="${esc(c.zh)}">▶ 듣기</button></div><div class="row"><button class="btn mk" data-srs="0" data-v="miss" aria-pressed="false">다시</button><button class="btn mk" data-srs="1" data-v="unsure" aria-pressed="false">어려움</button><button class="btn mk" data-srs="2" data-v="ok" aria-pressed="false">쉬움</button></div>` : `<div><button class="btn" data-srs-flip>정답 보기</button></div>`}</article>`;
+  }
+  // 3번 말하기 (4/3/2)
+  function t432Html(){
+    const T = S.t432; const secs = [90, 60, 45];
+    if (!T) return `<article class="card"><b>⏱ 3번 말하기 <span class="sub">4분</span></b><div class="sub">미션 주제를 90초 → 60초 → 45초 동안 세 번 말해요. 같은 내용을 점점 짧게 말하면 막힘이 줄어요.</div><div><button class="btn" data-t432>시작</button></div></article>`;
+    if (T.round >= 3) return `<article class="card"><b>⏱ 3번 말하기</b><div>세 번 다 했어요! 세 번째가 덜 막혔다면 효과가 있는 거예요.</div><div><button class="btn" data-t432-reset>다시</button></div></article>`;
+    return `<article class="card"><b>⏱ 3번 말하기 <span class="sub">${T.round + 1}/3회 · ${secs[T.round]}초</span></b><div class="fw" id="t432" style="font-size:34px">${T.left}</div><div><button class="btn" data-t432-next>${T.running ? "건너뛰기" : "이번 회 시작"}</button></div></article>`;
+  }
+  function tick(){ const T = S.t432; if (!T || !T.running) return; T.left--; const el = $("t432"); if (el) el.textContent = T.left; if (T.left <= 0){ T.running = false; clearInterval(T.iv); T.round++; T.left = [90, 60, 45][T.round] || 0; say(T.round >= 3 ? "세 번 말하기 끝!" : "시간 끝! 다음 회는 더 짧게."); renderExtra(); } }
+  function renderExtra(){ const el = $("extra"); if (el) el.innerHTML = `<div style="display:grid;gap:12px">${t432Html()}${srsHtml()}${toneHtml()}</div>`; }
+  document.addEventListener("click", e => {
+    const t = e.target;
+    if (t.closest("[data-shadow]")){ if (S.shadowing){ stopShadow(); renderDay(); } else { S.cover = false; S.shadowing = true; renderDay(); runShadow(0); } return; }
+    if (t.closest("[data-tone-start]")){ toneSet(); renderExtra(); if (!S.tone.set.length) say("훈련할 단어가 아직 없어요."); else setTimeout(playTone, 150); return; }
+    if (t.closest("[data-tone-play]")) return playTone();
+    const pk = t.closest("[data-tone-pick]"); if (pk && S.tone && !S.tone.picked){ const it = S.tone.set[S.tone.i]; S.tone.picked = pk.dataset.tonePick; if (S.tone.picked === it.py) S.tone.right++; return renderExtra(); }
+    if (t.closest("[data-tone-next]") && S.tone){ S.tone.i++; S.tone.picked = null; renderExtra(); if (S.tone.i < S.tone.set.length) setTimeout(playTone, 150); return; }
+    if (t.closest("[data-srs-start]")){ S.srsQ = { list: dueCards(), i: 0, flip: false }; return renderExtra(); }
+    if (t.closest("[data-srs-flip]") && S.srsQ){ S.srsQ.flip = true; renderExtra(); const c = S.srsQ.list[S.srsQ.i]; if (c) speak(c.zh); return; }
+    const r = t.closest("[data-srs]"); if (r && S.srsQ){ const c = S.srsQ.list[S.srsQ.i]; const g = +r.dataset.srs; const st = store.get("srs", {}); const cur = st[c.id] || { box: 0 }; const box = g === 0 ? 1 : g === 1 ? Math.max(1, cur.box) : Math.min(BOX.length - 1, (cur.box || 0) + 1); st[c.id] = { box, due: Date.now() + BOX[box] * 864e5 - 36e5 }; store.set("srs", st); S.srsQ.i++; S.srsQ.flip = false; return renderExtra(); }
+    if (t.closest("[data-t432]")){ S.t432 = { round: 0, left: 90, running: false }; return renderExtra(); }
+    if (t.closest("[data-t432-reset]")){ S.t432 = null; return renderExtra(); }
+    if (t.closest("[data-t432-next]") && S.t432){ const T = S.t432; if (T.running){ T.left = 1; tick(); return; } T.running = true; clearInterval(T.iv); T.iv = setInterval(tick, 1000); return renderExtra(); }
+  });
+
   function exportCode(){
     const recs = [];
     packs().forEach(p => (p.days||[]).forEach(d => { const r = store.get(recKey(p.id, d.packDay), null); if (r && (Object.keys(r.marks||{}).length || r.mission)) recs.push({ pack: p.id, day: d.packDay, marks: r.marks, mission: r.mission || "", at: r.at || "" }); }));
@@ -230,7 +306,7 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
     if (v === "rec") renderRec();
     window.scrollTo(0, 0);
   }
-  function openDay(n){ S.day = n; S.cover = false; S.peek = {}; store.set("curDay", n); setView("day"); }
+  function openDay(n){ if (S.shadowing) stopShadow(); S.tone = null; S.srsQ = null; if (S.t432) clearInterval(S.t432.iv); S.t432 = null; S.day = n; S.cover = false; S.peek = {}; store.set("curDay", n); setView("day"); }
 
   document.addEventListener("click", e => {
     const t = e.target;
