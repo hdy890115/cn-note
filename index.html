@@ -41,7 +41,7 @@ button{font:inherit;color:var(--ink)}
 .mk[aria-pressed="true"][data-v="unsure"]{background:var(--warn);color:var(--sheet);border-color:var(--warn)}
 .mk[aria-pressed="true"][data-v="miss"]{background:var(--bad);color:var(--sheet);border-color:var(--bad)}
 .mk{flex:1}
-input[type=text],textarea{width:100%;font:inherit;font-size:16px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)}
+input[type=text],input[type=password],textarea{width:100%;font:inherit;font-size:16px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)}
 textarea{resize:vertical}
 .days{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .day{text-align:left;background:var(--sheet);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:2px;cursor:pointer}
@@ -87,6 +87,13 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
 .stick::-webkit-scrollbar{display:none}
 .stick .chip{flex:none}
 .code{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
+.aires{border-radius:8px;padding:10px 12px;display:grid;gap:6px;background:var(--paper);border-left:4px solid var(--line)}
+.aires.v-ok{border-left-color:var(--ok)}.aires.v-hold{border-left-color:var(--warn)}.aires.v-miss{border-left-color:var(--bad)}
+.aires .vd{font-weight:700;font-size:15px}.aires.v-ok .vd{color:var(--ok)}.aires.v-hold .vd{color:var(--warn)}.aires.v-miss .vd{color:var(--bad)}
+.aires .tag.o{color:var(--ok);border-color:var(--ok)}.aires .tag.x{color:var(--bad);border-color:var(--bad)}
+.errs{margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px}
+.inrow{display:flex;gap:6px;align-items:center}.inrow input{flex:1;min-width:0}
+.mic{flex:none;min-width:44px}.mic.on{background:var(--bad);color:var(--sheet);border-color:var(--bad)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -156,7 +163,7 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
       <h2>${esc(p.title)}</h2>
       <div class="sub">하루 20~30분 · 상황 대화 → 핵심 표현 6개 → 퀴즈 9개 → 롤플레이 미션</div>
       <div class="days" style="margin-top:12px">${p.days.map(d => { const g = prog(p, d); return `<button class="day${g.complete?' done':''}" data-day="${d.packDay}"><span class="sub">${d.packDay}일차${g.complete?" ✓":""}</span><b>${esc(d.title)}</b><span class="zh sub">${esc(d.scene?.title||"")}</span><span class="bar"><span style="width:${g.pct}%"></span></span></button>`; }).join("")}</div>
-      <div class="card" style="margin-top:16px"><b>새 단원 넣기</b><div class="sub">2주마다 받는 단원 파일(.json)을 고르면 이 앱에 추가돼요. 지난 기록은 그대로 남아요.</div><input type="file" id="packfile" accept=".json,application/json"></div>`;
+      <div class="card" style="margin-top:16px"><b>새 단원 넣기</b><div class="sub">2주마다 받는 단원 파일(.json)을 고르면 이 앱에 추가돼요. 지난 기록은 그대로 남아요.</div><input type="file" id="packfile" accept=".json,application/json"></div>${aiSetHtml()}`;
   }
 
   function sceneHtml(d){
@@ -176,14 +183,114 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
       ${g ? `<div class="gbox"><div class="ghead">포인트 · ${esc(g.title)}</div><div class="gin">${g.pattern?`<div class="gpat zh">${esc(g.pattern)}</div>`:""}${g.meaning?`<div>${esc(g.meaning)}</div>`:""}${(g.points||[]).length?`<ul class="gpts">${g.points.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}${g.caution?`<div class="warn">${esc(g.caution)}</div>`:""}${(it.examples||[]).map(x => `<div><span class="zh">${esc(x.text)}</span> <button class="say" data-say="${esc(x.text)}">▶</button><div class="py">${esc(x.pinyin||"")}</div><div class="ko">${esc(x.ko||"")}</div></div>`).join("")}</div></div>` : ""}
       ${it.tip ? `<div class="tip"><span class="lbl">발음 </span>${esc(it.tip)}</div>` : ""}</article>`;
   }
+  // ================= AI 채점 (인터넷 필요 · Claude API) =================
+  const VN = { ok: "정답", hold: "보류", miss: "오답" }, VMARK = { ok: "ok", hold: "unsure", miss: "miss" };
+  const aiCfg = () => store.get("aiCfg", { key: "", model: "claude-haiku-5-5" });
+  function aiHtml(a){
+    const ck = (v, t) => `<span class="tag ${v ? "o" : "x"}">${t} ${v ? "○" : "×"}</span>`;
+    return `<div class="aires v-${esc(a.verdict)}"><div class="top"><span class="vd">AI 채점 · ${VN[a.verdict] || "?"}</span><span class="tags">${ck(a.meaning, "의미")}${ck(a.grammar, "문법")}${ck(a.words, "단어")}</span></div>
+      ${(a.errors || []).length ? `<ul class="errs">${a.errors.map(e => `<li><span class="tag">${esc(e.type || "")}</span> <span class="zh">${esc(e.part || "")}</span>${e.fix ? ` → <span class="zh" style="color:var(--jade)">${esc(e.fix)}</span>` : ""}<div>${esc(e.why || "")}</div></li>`).join("")}</ul>` : ""}
+      ${a.explain ? `<div style="font-size:14px">${esc(a.explain)}</div>` : ""}
+      ${a.corrected && a.verdict !== "ok" ? `<div><span class="lbl">이렇게 고치면 돼요</span><div class="top"><span class="zh" style="font-size:17px">${esc(a.corrected)}</span><button class="say" data-say="${esc(a.corrected)}">▶</button></div><div class="py">${esc(a.pinyin || "")}</div></div>` : ""}</div>`;
+  }
+  const SYS = `너는 한국인 직장인 학습자(HSK 3~4)의 중국어 답안을 채점하는 중국어 선생님이다. 설명은 한국어 ~해요체로, 짧고 정확하게 쓴다.
+채점 기준 세 가지:
+- meaning(의미): 문제에서 요구한 한국어 뜻과 상황을 중국어로 전달했는가. 모범답안과 표현이 달라도 자연스럽고 뜻이 맞으면 true.
+- grammar(문법): 어순, 了·过·着, 把·被, 보어, 조사, 의문문 형식 등이 맞는가. 문제가 특정 문법(예: 还没把, 比)을 쓰라고 했는데 쓰지 않았으면 false.
+- words(단어): 단어 선택, 동사·목적어 호응, 양사, 오자가 맞는가.
+판정 verdict:
+- "ok": 세 가지가 모두 true.
+- "hold": meaning은 true인데 grammar 또는 words가 false.
+- "miss": meaning이 false(뜻이 안 통함·다른 뜻·답이 비었거나 중국어가 아님).
+규칙:
+- 말하기 문제는 음성 인식으로 받아 적은 답일 수 있다. 소리가 같은 다른 한자(동음이의 오인식)는 단어 오류로 치지 말고 errors 대신 explain에 한 줄로만 알린다.
+- 병음으로 쓴 답은 병음 그대로 채점한다(성조 표시는 없어도 된다).
+- 문장부호, 띄어쓰기, 儿화 유무, 아라비아 숫자와 한자 숫자 차이는 오류로 치지 않는다.
+- ok가 아니면 errors에 틀린 부분을 하나씩 반드시 적는다: part(학습자 답의 틀린 부분 그대로), fix(고친 표현), type("의미"|"문법"|"단어"|"어순" 중 하나), why(왜 틀렸는지 한두 문장).
+- explain: ok면 한 줄 칭찬 또는 더 자연스러운 표현 하나, ok가 아니면 핵심을 한두 문장으로 정리.
+- corrected: 학습자 답을 가능한 한 적게 고친 자연스러운 문장(ok면 학습자 답 그대로). pinyin: corrected의 병음(성조 표시).
+출력은 JSON 객체 하나만 쓴다. 다른 글자는 쓰지 않는다.
+{"meaning":true,"grammar":true,"words":true,"verdict":"ok","errors":[],"explain":"","corrected":"","pinyin":""}`;
+  async function aiGrade(q, d, answer){
+    const c = aiCfg(); if (!c.key) throw new Error("nokey");
+    const it = (d.items || []).find(x => x.id === q.refItemId) || {};
+    const g = it.grammar && typeof it.grammar === "object" ? it.grammar : null;
+    const ctx = [
+      `상황: ${d.scene?.situation || ""}`,
+      `문제(${q.type === "speak" ? "말하기" : "쓰기"}): ${q.prompt}`,
+      q.hint ? `힌트: ${q.hint}` : "",
+      `모범답안: ${q.answer}`,
+      it.sentence ? `관련 핵심 표현: ${it.sentence} (${it.ko || ""})` : "",
+      g ? `관련 문법: ${g.title} ${g.pattern || ""} ${g.caution || ""}` : "",
+      q.explain ? `참고 설명: ${q.explain}` : "",
+      `학습자 답: ${answer}`
+    ].filter(Boolean).join("\n");
+    const ac = new AbortController(); const tm = setTimeout(() => ac.abort(), 45000);
+    try{
+      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", signal: ac.signal,
+        headers: { "content-type": "application/json", "x-api-key": c.key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: c.model || "claude-haiku-5-5", max_tokens: 3000, system: SYS, messages: [{ role: "user", content: ctx }] }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { const e = new Error("api"); e.status = res.status; e.msg = j?.error?.message || ""; throw e; }
+      const txt = (j.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+      const mt = txt.match(/\{[\s\S]*\}/); if (!mt) throw new Error("parse");
+      const a = JSON.parse(mt[0]);
+      a.meaning = !!a.meaning; a.grammar = !!a.grammar; a.words = !!a.words;
+      // 판정은 세 기준으로 다시 맞춰요(규칙: 다 맞으면 정답, 뜻만 통하면 보류, 뜻이 안 통하면 오답)
+      a.verdict = !a.meaning ? "miss" : (a.grammar && a.words) ? "ok" : "hold";
+      if (!Array.isArray(a.errors)) a.errors = [];
+      if (a.verdict !== "ok" && !a.errors.length && !a.explain) a.explain = "틀린 부분 설명을 받지 못했어요. 다시 채점해 보세요.";
+      a.model = c.model; a.at = new Date().toISOString();
+      return a;
+    } finally { clearTimeout(tm); }
+  }
+  const aiErr = e => e.message === "nokey" ? "‘단원’ 화면 아래 AI 채점 설정에서 API 키를 먼저 넣어 주세요."
+    : e.name === "AbortError" ? "응답이 너무 늦어요. 인터넷(VPN)을 확인하고 다시 눌러 주세요."
+    : e.status === 401 ? "API 키가 맞지 않아요. 설정에서 다시 넣어 주세요."
+    : e.status === 403 ? "이 지역·네트워크에서는 막혀 있어요. VPN을 켜고 다시 해 보세요."
+    : e.status === 429 ? "요청이 많아요. 잠시 뒤 다시 눌러 주세요."
+    : e.status === 400 && /credit|balance/i.test(e.msg || "") ? "API 크레딧이 부족해요."
+    : e.status ? `AI 채점 오류(${e.status}) ${e.msg || ""}`.trim()
+    : e.message === "parse" ? "채점 결과를 읽지 못했어요. 다시 눌러 주세요."
+    : "인터넷에 연결되지 않았어요. VPN을 켜거나 ‘정답 보고 채점하기’로 스스로 채점해 주세요.";
+  // ---- 말해서 입력: 아이폰 음성 인식. 안 되면 키보드 마이크 안내
+  function micStart(id){
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const inp = () => document.querySelector(`[data-in="${CSS.escape(id)}"]`);
+    if (S.mic){ try{ S.mic.stop(); }catch(e){} return; }
+    { const i0 = inp(); if (i0 && i0.value.trim()){ const r = rec(P().id, S.day); r.marks[id] = Object.assign({}, r.marks[id], { answer: i0.value.trim() }); saveRec(P().id, S.day, r); } }
+    if (!SR){ const i = inp(); if (i) i.focus(); return say("여기서는 음성 인식이 안 돼요. 키보드의 🎤 받아쓰기(중국어 키보드)로 말해 주세요."); }
+    let rc; try{ rc = new SR(); }catch(e){ return say("음성 인식을 시작하지 못했어요. 키보드 🎤로 말해 주세요."); }
+    rc.lang = "zh-CN"; rc.interimResults = true; rc.continuous = false; rc.maxAlternatives = 1;
+    rc.onresult = ev => { let t = ""; for (let k = 0; k < ev.results.length; k++) t += ev.results[k][0].transcript; const i = inp(); if (i) i.value = t; };
+    rc.onerror = ev => { S.micErr = ev.error; };
+    rc.onend = () => {
+      S.mic = null; S.micId = null; const i = inp(); const v = i ? i.value.trim() : "";
+      if (v){ const r = rec(P().id, S.day); r.marks[id] = Object.assign({}, r.marks[id], { answer: v }); saveRec(P().id, S.day, r); }
+      const er = S.micErr; S.micErr = null;
+      if (er === "not-allowed" || er === "service-not-allowed") say("마이크 권한이 막혀 있어요. 키보드의 🎤 받아쓰기로 말해 주세요.");
+      else if (er === "no-speech") say("소리가 들리지 않았어요. 다시 눌러 말해 주세요.");
+      else if (er) say("음성 인식이 끊겼어요. 키보드 🎤로 말해도 돼요.");
+      renderDay();
+    };
+    try{ rc.start(); S.mic = rc; S.micId = id; renderDay(); say("말해 주세요. 다 말하면 ■를 눌러요."); }catch(e){ say("음성 인식을 시작하지 못했어요. 키보드 🎤로 말해 주세요."); }
+  }
+  function aiSetHtml(){
+    const c = aiCfg();
+    return `<div class="card"><b>AI 채점 설정</b><div class="sub">퀴즈의 ‘AI 채점’은 인터넷(중국에서는 VPN)이 될 때 Claude가 의미·문법·단어를 보고 정답·보류·오답을 매기고, 틀린 부분을 설명해요. Claude API 키(console.anthropic.com에서 발급, 사용한 만큼 유료)가 필요해요. 키는 이 휴대폰 안에만 저장돼요.</div>
+      <input type="password" id="aikey" placeholder="${c.key ? "저장됨 · …" + esc(c.key.slice(-4)) + " (바꾸려면 새 키 입력)" : "sk-ant-로 시작하는 API 키"}" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="row"><button class="chip" data-aimodel="claude-haiku-5-5" aria-pressed="${c.model !== "claude-sonnet-5-5"}">빠르고 저렴 (Haiku)</button><button class="chip" data-aimodel="claude-sonnet-5-5" aria-pressed="${c.model === "claude-sonnet-5-5"}">더 꼼꼼 (Sonnet)</button></div>
+      <div class="row"><button class="btn" data-aisave>저장</button><button class="btn" data-aitest ${c.key ? "" : "disabled"}>연결 확인</button>${c.key ? `<button class="btn" data-aidel>키 지우기</button>` : ""}</div></div>`;
+  }
   function quizHtml(d, r){
     return (d.quiz||[]).map(q => {
       const m = r.marks[q.id] || {}; const open = !!m.mark || !!S.peek["q"+q.id];
       return `<article class="card" data-q="${esc(q.id)}"><div class="tags"><span class="tag">${q.type==="speak"?"말하기":"쓰기"}</span>${q.review?'<span class="tag">복습</span>':""}${q.checkpoint?'<span class="tag">점검</span>':""}${q.cat?`<span class="tag">${esc(q.cat)}</span>`:""}</div>
         <div style="font-weight:500">${esc(q.prompt)}</div>${q.hint?`<div class="sub">힌트: ${esc(q.hint)}</div>`:""}
         ${(q.choices||[]).length ? `<div class="choices">${q.choices.map(c => `<button class="chip" data-ch="${esc(q.id)}" data-val="${esc(c)}" aria-pressed="${m.answer===c}">${esc(c)}</button>`).join("")}</div>`
-          : `${q.type==="speak"?'<div class="sub">소리 내어 2~3번 말해 보세요. 키보드 마이크로 말해서 적어 둘 수도 있어요.</div>':""}<input type="text" class="zh" data-in="${esc(q.id)}" lang="zh-CN" value="${esc(m.answer||"")}" placeholder="한자 또는 병음" autocomplete="off" autocapitalize="off" spellcheck="false">`}
-        ${open ? "" : `<button class="btn" data-show="${esc(q.id)}">정답 보고 채점하기</button>`}
+          : `${q.type==="speak"?'<div class="sub">소리 내어 2~3번 말해 본 뒤, 🎤를 누르고 말하면 받아 적어요(안 되면 키보드 마이크).</div>':""}<div class="inrow"><input type="text" class="zh" data-in="${esc(q.id)}" lang="zh-CN" value="${esc(m.answer||"")}" placeholder="한자 또는 병음" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="say mic${S.micId===q.id?" on":""}" data-mic="${esc(q.id)}" aria-label="말해서 입력">${S.micId===q.id?"■":"🎤"}</button></div>
+          <div class="row"><button class="btn" data-ai="${esc(q.id)}" ${S.aiBusy===q.id?"disabled":""}>${S.aiBusy===q.id?"채점 중…":m.ai?"AI 다시 채점":"AI 채점"}</button>${open ? "" : `<button class="btn" data-show="${esc(q.id)}">정답 보고 채점하기</button>`}</div>${m.ai?aiHtml(m.ai):""}`}
+        ${open || !(q.choices||[]).length ? "" : `<button class="btn" data-show="${esc(q.id)}">정답 보고 채점하기</button>`}
         <div class="ans" ${open?"":"hidden"}><span class="lbl">정답</span><div class="zh">${esc(q.answer)}</div><div class="py">${esc(q.pinyin||"")}</div>${q.explain?`<div class="sub">${esc(q.explain)}</div>`:""}<div><button class="say" data-say="${esc(String(q.answer).split(" / ")[0])}">▶ 듣기</button></div>
           ${(q.choices||[]).length ? "" : `<div class="sub">뜻과 문법이 다 맞으면 맞음, 하나만 맞으면 헷갈림이에요.</div><div class="row">${[["ok","맞음"],["unsure","헷갈림"],["miss","틀림"]].map(([v,t]) => `<button class="btn mk" data-mk="${esc(q.id)}" data-v="${v}" aria-pressed="${m.mark===v}">${t}</button>`).join("")}</div>`}</div>
       </article>`;
@@ -200,8 +307,8 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
       ${d.note ? `<div class="note">${esc(d.note)}</div>` : ""}
       ${sceneHtml(d)}
       <h2>핵심 표현 · ${it.length}개</h2>${it.map(itemHtml).join("")}
-      <h2>퀴즈 · ${(d.quiz||[]).length}개</h2><div class="sub">오프라인이라 AI 채점 대신 정답을 보고 스스로 채점해요. 내보낸 기록은 온라인 노트에서 약점 분석에 쓰여요.</div>${quizHtml(d, r)}
-      <article class="card" style="border-left:4px solid var(--jade)"><b>롤플레이 미션</b><div style="font-size:14px">${esc(d.mission||"")}</div><textarea id="mission" class="zh" rows="3" placeholder="중국어로 써 보세요">${esc(r.mission||"")}</textarea><div class="row"><button class="btn" data-msave>저장</button><span class="sub">온라인에 연결되면 기록을 가져와서 문법 점검을 받을 수 있어요.</span></div></article>
+      <h2>퀴즈 · ${(d.quiz||[]).length}개</h2><div class="sub">답을 쓰거나 🎤로 말한 뒤 ‘AI 채점’을 누르면 의미·문법·단어를 보고 정답·보류·오답을 알려 줘요(인터넷 필요). 인터넷이 안 되면 ‘정답 보고 채점하기’로 스스로 채점해요.</div>${quizHtml(d, r)}
+      <article class="card" style="border-left:4px solid var(--jade)"><b>롤플레이 미션</b><div style="font-size:14px">${esc(d.mission||"")}</div><textarea id="mission" class="zh" rows="3" placeholder="중국어로 써 보세요">${esc(r.mission||"")}</textarea><div class="row"><button class="btn" data-msave>저장</button></div></article>
       <h2>회화 연습</h2><div id="extra"></div>`;
     renderExtra();
     document.body.classList.toggle("hide-py", !!S.opts.py); document.body.classList.toggle("hide-ko", !!S.opts.ko);
@@ -293,8 +400,7 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
     const ex = exportCode();
     $("v-rec").innerHTML = `<h2>${esc(p.title)} 기록</h2>
       <div class="card"><div class="row"><span class="tag j">채점 ${g}문항</span><span class="tag">정답률 ${g?Math.round((ok+.5*un)/g*100)+"%":"–"}</span><span class="tag">다시 볼 문제 ${wrong.length}</span></div></div>
-      ${wrong.length ? `<h2>틀리거나 헷갈린 문제</h2>${wrong.slice(-30).reverse().map(w => `<div class="card"><div class="tags"><span class="tag">${w.d}일차</span><span class="tag">${MARKN[w.m.mark]}</span>${w.q.cat?`<span class="tag">${esc(w.q.cat)}</span>`:""}</div><div class="sub">${esc(w.q.prompt)}</div>${w.m.answer?`<div class="zh">내 답: ${esc(w.m.answer)}</div>`:""}<div class="zh" style="color:var(--jade)">정답: ${esc(w.q.answer)}</div></div>`).join("")}` : ""}
-      <div class="card"><b>기록 내보내기</b><div class="sub">VPN이 될 때 아래 코드를 복사해서 온라인 학습 노트의 ‘기록·커리큘럼 → 오프라인 기록 가져오기’에 붙여 넣으세요. (${ex.n}일치)</div><textarea id="excode" class="code" rows="4" readonly>${esc(ex.code)}</textarea><button class="btn" data-copy>코드 복사</button></div>`;
+      ${wrong.length ? `<h2>틀리거나 헷갈린 문제</h2>${wrong.slice(-30).reverse().map(w => `<div class="card"><div class="tags"><span class="tag">${w.d}일차</span><span class="tag">${w.m.ai ? "AI " + (VN[w.m.ai.verdict] || "") : MARKN[w.m.mark]}</span>${w.q.cat?`<span class="tag">${esc(w.q.cat)}</span>`:""}</div><div class="sub">${esc(w.q.prompt)}</div>${w.m.answer?`<div class="zh">내 답: ${esc(w.m.answer)}</div>`:""}<div class="zh" style="color:var(--jade)">정답: ${esc(w.q.answer)}</div>${w.m.ai ? aiHtml(w.m.ai) : ""}</div>`).join("")}` : ""}`;
   }
 
   function setView(v){
@@ -332,8 +438,30 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
     if ((x = b("[data-mk]"))){
       const id = x.dataset.mk; const r = rec(P().id, S.day); const inp = document.querySelector(`[data-in="${CSS.escape(id)}"]`);
       const prev = r.marks[id] || {}; const ans = inp ? inp.value.trim() : (prev.answer || "");
-      r.marks[id] = { mark: x.dataset.v, answer: ans }; saveRec(P().id, S.day, r);
+      r.marks[id] = Object.assign({ mark: x.dataset.v, answer: ans }, prev.ai && prev.answer === ans ? { ai: prev.ai } : {}); saveRec(P().id, S.day, r);
       const g = prog(P(), D()); say(g.complete ? `${S.day}일차 완료!` : "채점을 저장했어요."); return renderDay();
+    }
+    if ((x = b("[data-mic]"))) return micStart(x.dataset.mic);
+    if ((x = b("[data-ai]"))){
+      const id = x.dataset.ai, d = D(), q = d.quiz.find(q => q.id === id); const inp = document.querySelector(`[data-in="${CSS.escape(id)}"]`);
+      const ans = inp ? inp.value.trim() : ""; if (!ans) return say("먼저 답을 쓰거나 🎤로 말해 주세요.");
+      if (S.aiBusy) return say("채점 중이에요. 잠시만요.");
+      const pid = P().id, day = S.day; const r0 = rec(pid, day); r0.marks[id] = Object.assign({}, r0.marks[id], { answer: ans }); saveRec(pid, day, r0);
+      S.aiBusy = id; renderDay();
+      aiGrade(q, d, ans).then(a => {
+        const r = rec(pid, day); r.marks[id] = { mark: VMARK[a.verdict], answer: ans, ai: a }; saveRec(pid, day, r);
+        S.peek["q" + id] = true; const g = prog(P(), D()); say(g.complete ? `${day}일차 완료!` : `AI 채점: ${VN[a.verdict]}`);
+      }).catch(e => say(aiErr(e))).finally(() => { S.aiBusy = null; if (S.view === "day" && S.day === day) renderDay(); });
+      return;
+    }
+    if ((x = b("[data-aimodel]"))){ const c = aiCfg(); c.model = x.dataset.aimodel; store.set("aiCfg", c); say("채점 모델을 바꿨어요."); return renderHome(); }
+    if (b("[data-aisave]")){ const v = ($("aikey").value || "").trim(); if (!v) return say("API 키를 넣어 주세요."); if (!/^sk-ant-/.test(v)) return say("sk-ant-로 시작하는 Claude API 키를 넣어 주세요."); const c = aiCfg(); c.key = v; store.set("aiCfg", c); say("API 키를 저장했어요."); return renderHome(); }
+    if (b("[data-aidel]")){ const c = aiCfg(); c.key = ""; store.set("aiCfg", c); say("API 키를 지웠어요."); return renderHome(); }
+    if ((x = b("[data-aitest]"))){
+      const d0 = (P().days || [])[0], q0 = d0 && (d0.quiz || []).find(q => !(q.choices || []).length); if (!q0) return;
+      x.disabled = true; say("연결을 확인하는 중이에요…");
+      aiGrade(q0, d0, String(q0.answer).split(" / ")[0]).then(a => say(`연결됐어요. (시험 채점: ${VN[a.verdict]})`)).catch(e => say(aiErr(e))).finally(() => { x.disabled = false; });
+      return;
     }
     if (b("[data-msave]")){ const r = rec(P().id, S.day); r.mission = $("mission").value.trim(); saveRec(P().id, S.day, r); const g = prog(P(), D()); say(g.complete ? `${S.day}일차 완료!` : "미션을 저장했어요."); return renderDay(); }
     if (b("[data-copy]")){ const ta = $("excode"); ta.select(); ta.setSelectionRange(0, 1e9); let ok = false; try{ ok = document.execCommand("copy"); }catch(e){} if (navigator.clipboard) navigator.clipboard.writeText(ta.value).then(() => say("코드를 복사했어요."), () => say(ok ? "코드를 복사했어요." : "코드를 길게 눌러 복사해 주세요.")); else say(ok ? "코드를 복사했어요." : "코드를 길게 눌러 복사해 주세요."); return; }
