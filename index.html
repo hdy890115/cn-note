@@ -89,6 +89,7 @@ mark{background:transparent;color:var(--jade);font-weight:700;border-bottom:2px 
 .code{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
 .inrow{display:flex;gap:6px;align-items:center}.inrow input{flex:1;min-width:0}
 .mic{flex:none;min-width:44px}.mic.on{background:var(--bad);color:var(--sheet);border-color:var(--bad)}
+.aires{border-left:4px solid var(--line);background:var(--paper);border-radius:8px;padding:10px 12px;display:grid;gap:4px}.aires.v-ok{border-left-color:var(--ok)}.aires.v-unsure{border-left-color:var(--warn)}.aires.v-miss{border-left-color:var(--bad)}.aires .vd{font-weight:700}.v-ok .vd{color:var(--ok)}.v-unsure .vd{color:var(--warn)}.v-miss .vd{color:var(--bad)}.aires .zh{font-size:17px}.dx{color:var(--bad);text-decoration:line-through}.dm{color:var(--ok);font-weight:700;text-decoration:underline}
 a.btn{text-decoration:none;display:inline-flex;align-items:center}a.btn.main{background:var(--jade);color:var(--paper);border-color:var(--jade);font-weight:700}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -179,14 +180,55 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}a.btn.main{bac
       ${g ? `<div class="gbox"><div class="ghead">포인트 · ${esc(g.title)}</div><div class="gin">${g.pattern?`<div class="gpat zh">${esc(g.pattern)}</div>`:""}${g.meaning?`<div>${esc(g.meaning)}</div>`:""}${(g.points||[]).length?`<ul class="gpts">${g.points.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}${g.caution?`<div class="warn">${esc(g.caution)}</div>`:""}${(it.examples||[]).map(x => `<div><span class="zh">${esc(x.text)}</span> <button class="say" data-say="${esc(x.text)}">▶</button><div class="py">${esc(x.pinyin||"")}</div><div class="ko">${esc(x.ko||"")}</div></div>`).join("")}</div></div>` : ""}
       ${it.tip ? `<div class="tip"><span class="lbl">발음 </span>${esc(it.tip)}</div>` : ""}</article>`;
   }
-  // ================= Claude 채점: 문제와 내 답을 claude.ai 채점 페이지로 넘겨요 =================
-  const GRADER = "https://claude.ai/artifact/Gn3R8XmD6pJshhePDsfvXF";
-  function graderUrl(q, d, answer){
-    const it = (d.items || []).find(x => x.id === q.refItemId) || {};
-    const g = it.grammar && typeof it.grammar === "object" ? it.grammar : null;
-    const o = { t: q.type, p: q.prompt, h: q.hint || "", a: q.answer, s: String(d.scene?.situation || "").slice(0, 80), k: it.sentence || "", g: g ? (g.title + " " + (g.pattern || "")).trim() : "", u: answer, id: `${P().id}/${d.packDay}/${q.id}` };
-    let hex = ""; new TextEncoder().encode(JSON.stringify(o)).forEach(b => hex += b.toString(16).padStart(2, "0"));
-    return GRADER + "#g" + hex;
+  // ================= 앱 안 자동채점 (인터넷 없이) =================
+  // 내 답을 모범답안(" / "로 나뉜 여러 개)과 글자 단위로 비교해요. 힌트·문제 속 핵심 단어가 들어갔는지도 봐요.
+  const HAN = /[㐀-鿿]/;
+  const normZh = t => String(t||"").replace(/[\s　，。！？、；：,.!?;:“”"'‘’（）()…—~·\-]/g, "").replace(/儿(?=[^㐀-鿿]|$)/g, "儿");
+  const normPy = t => String(t||"").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/ü/g,"v").replace(/[^a-z]/g, "");
+  function lcs(a, b){
+    const A = [...a], B = [...b], n = A.length, m = B.length; const T = Array.from({length:n+1}, () => new Array(m+1).fill(0));
+    for (let i = n-1; i >= 0; i--) for (let j = m-1; j >= 0; j--) T[i][j] = A[i]===B[j] ? T[i+1][j+1]+1 : Math.max(T[i+1][j], T[i][j+1]);
+    const ia = new Set(), ib = new Set(); let i = 0, j = 0;
+    while (i < n && j < m){ if (A[i]===B[j]){ ia.add(i); ib.add(j); i++; j++; } else if (T[i+1][j] >= T[i][j+1]) i++; else j++; }
+    return { len: T[0][0], ia, ib, A, B };
+  }
+  function keyWords(q, models){
+    const src = [q.hint||"", String(q.prompt||"").replace(/\(복습[^)]*\)/g, "")].join(" ");
+    const ks = new Set();
+    (src.match(/[㐀-鿿]+/g) || []).forEach(k => k.split("").length && ks.add(k));
+    (String(q.prompt||"").match(/[㐀-鿿]+…[㐀-鿿]+/g) || []).forEach(k => k.split("…").forEach(x => ks.add(x)));
+    // 모든 모범답안에 다 들어 있는 것만 꼭 필요한 단어로 봐요
+    return [...ks].filter(k => k && models.every(m => normZh(m).includes(k)));
+  }
+  function autoGrade(q, answer){
+    const models = String(q.answer||"").split(" / ").map(x => x.trim()).filter(Boolean);
+    const isPy = !HAN.test(answer) && /[a-zA-Z]/.test(answer);
+    let best = null;
+    if (isPy){
+      const u = normPy(answer), m = normPy(q.pinyin || ""); if (!m) return { verdict: "unsure", score: 0, isPy, model: models[0]||"", msg: "병음 모범답안이 없어 비교하지 못했어요. 한자로 입력해 보세요." };
+      const L = lcs(u, m); best = { score: 2*L.len/(u.length+m.length||1), model: q.pinyin, L, missKeys: [] };
+    } else {
+      const u = normZh(answer); const keys = keyWords(q, models);
+      models.forEach(mo => { const m = normZh(mo); const L = lcs(u, m); const score = 2*L.len/(u.length+m.length||1); if (!best || score > best.score) best = { score, model: mo, L }; });
+      best.missKeys = keys.filter(k => !u.includes(k));
+      if (models.some(mo => normZh(mo) === u)) best.score = 1;
+    }
+    const sc = best.score, mk = best.missKeys.length;
+    const verdict = sc >= .999 ? "ok" : (sc >= .8 && !mk) ? "ok" : (sc >= .55 || (sc >= .35 && !mk)) ? "unsure" : "miss";
+    let msg = verdict === "ok" ? (sc >= .999 ? "모범답안과 같아요." : (isPy ? "모범답안 병음과 거의 같아요." : "모범답안과 거의 같아요. 조금 다른 글자는 아래에서 확인하세요."))
+      : verdict === "unsure" ? "뜻은 비슷하지만 다른 부분이 있어요. 빨간 글자와 빠진 글자를 확인하세요."
+      : "모범답안과 많이 달라요. 정답 문장을 듣고 따라 말해 보세요.";
+    if (mk) msg += ` 꼭 들어가야 할 단어가 빠졌어요: ${best.missKeys.join(", ")}`;
+    if (verdict !== "ok" && !isPy) msg += " (다르게 표현한 맞는 답일 수도 있어요. 그럴 땐 아래 버튼으로 바꿔 주세요.)";
+    return { verdict, score: Math.round(sc*100), isPy, model: best.model, msg, L: best.L };
+  }
+  function diffHtml(answer, res){
+    if (!res || !res.L || res.isPy) return "";
+    const u = normZh(answer), L = res.L, m = normZh(res.model);
+    const L2 = lcs(u, m);
+    const mine = [...u].map((c,i) => L2.ia.has(i) ? esc(c) : `<span class="dx">${esc(c)}</span>`).join("");
+    const mod = [...m].map((c,j) => L2.ib.has(j) ? esc(c) : `<span class="dm">${esc(c)}</span>`).join("");
+    return `<div class="sub">내 답</div><div class="zh">${mine||"–"}</div><div class="sub">가까운 모범답안 <span class="dm">초록</span>=내 답에 없는 글자 · <span class="dx">빨강</span>=모범답안에 없는 글자</div><div class="zh">${mod}</div>`;
   }
   // ---- 말해서 입력: 아이폰 음성 인식. 안 되면 키보드 마이크 안내
   function micStart(id){
@@ -201,7 +243,7 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}a.btn.main{bac
     rc.onerror = ev => { S.micErr = ev.error; };
     rc.onend = () => {
       S.mic = null; S.micId = null; const i = inp(); const v = i ? i.value.trim() : "";
-      if (v){ const r = rec(P().id, S.day); r.marks[id] = Object.assign({}, r.marks[id], { answer: v }); saveRec(P().id, S.day, r); }
+      if (v){ const q = D().quiz.find(q => q.id === id); const res = autoGrade(q, v); const r = rec(P().id, S.day); r.marks[id] = { mark: res.verdict, answer: v, auto: { verdict: res.verdict, score: res.score, msg: res.msg, model: res.model, isPy: res.isPy } }; saveRec(P().id, S.day, r); S.peek["q" + id] = true; }
       const er = S.micErr; S.micErr = null;
       if (er === "not-allowed" || er === "service-not-allowed") say("마이크 권한이 막혀 있어요. 키보드의 🎤 받아쓰기로 말해 주세요.");
       else if (er === "no-speech") say("소리가 들리지 않았어요. 다시 눌러 말해 주세요.");
@@ -217,10 +259,11 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}a.btn.main{bac
         <div style="font-weight:500">${esc(q.prompt)}</div>${q.hint?`<div class="sub">힌트: ${esc(q.hint)}</div>`:""}
         ${(q.choices||[]).length ? `<div class="choices">${q.choices.map(c => `<button class="chip" data-ch="${esc(q.id)}" data-val="${esc(c)}" aria-pressed="${m.answer===c}">${esc(c)}</button>`).join("")}</div>`
           : `${q.type==="speak"?'<div class="sub">소리 내어 2~3번 말해 본 뒤, 🎤를 누르고 말하면 받아 적어요(안 되면 키보드 마이크).</div>':""}<div class="inrow"><input type="text" class="zh" data-in="${esc(q.id)}" lang="zh-CN" value="${esc(m.answer||"")}" placeholder="한자 또는 병음" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="say mic${S.micId===q.id?" on":""}" data-mic="${esc(q.id)}" aria-label="말해서 입력">${S.micId===q.id?"■":"🎤"}</button></div>
-          <div class="row"><a class="btn main" data-ai="${esc(q.id)}" href="${GRADER}" target="_blank" rel="noopener">Claude로 채점</a>${open ? "" : `<button class="btn" data-show="${esc(q.id)}">정답 보고 채점하기</button>`}</div>`}
+          <div class="row"><button class="btn main" data-ai="${esc(q.id)}">${m.auto?"다시 채점":"채점하기"}</button>${open ? "" : `<button class="btn" data-show="${esc(q.id)}">정답만 보기</button>`}</div>`}
+        ${m.auto && !(q.choices||[]).length ? `<div class="aires v-${esc(m.mark||m.auto.verdict)}"><div class="vd">자동채점 · ${MARKN[m.auto.verdict]||"?"} <span class="sub">일치도 ${m.auto.score}%</span></div><div class="sub">${esc(m.auto.msg)}</div>${diffHtml(m.answer||"", Object.assign({}, m.auto, { L: true }))}</div>` : ""}
         ${open || !(q.choices||[]).length ? "" : `<button class="btn" data-show="${esc(q.id)}">정답 보고 채점하기</button>`}
         <div class="ans" ${open?"":"hidden"}><span class="lbl">정답</span><div class="zh">${esc(q.answer)}</div><div class="py">${esc(q.pinyin||"")}</div>${q.explain?`<div class="sub">${esc(q.explain)}</div>`:""}<div><button class="say" data-say="${esc(String(q.answer).split(" / ")[0])}">▶ 듣기</button></div>
-          ${(q.choices||[]).length ? "" : `<div class="sub">Claude 채점 결과대로 눌러 기록해요. 의미·문법·단어가 다 맞으면 정답, 뜻은 통하는데 문법이나 단어가 틀리면 보류, 뜻이 안 통하면 오답이에요.</div><div class="row">${[["ok","정답"],["unsure","보류"],["miss","오답"]].map(([v,t]) => `<button class="btn mk" data-mk="${esc(q.id)}" data-v="${v}" aria-pressed="${m.mark===v}">${t}</button>`).join("")}</div>`}</div>
+          ${(q.choices||[]).length ? "" : `<div class="sub">자동채점 결과가 기록돼요. 다르게 표현했는데 맞는 답이면 아래에서 직접 바꿔 주세요.</div><div class="row">${[["ok","정답"],["unsure","보류"],["miss","오답"]].map(([v,t]) => `<button class="btn mk" data-mk="${esc(q.id)}" data-v="${v}" aria-pressed="${m.mark===v}">${t}</button>`).join("")}</div>`}</div>
       </article>`;
     }).join("");
   }
@@ -235,7 +278,7 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}a.btn.main{bac
       ${d.note ? `<div class="note">${esc(d.note)}</div>` : ""}
       ${sceneHtml(d)}
       <h2>핵심 표현 · ${it.length}개</h2>${it.map(itemHtml).join("")}
-      <h2>퀴즈 · ${(d.quiz||[]).length}개</h2><div class="sub">답을 쓰거나 🎤로 말한 뒤 ‘Claude로 채점’을 누르면 Claude가 의미·문법·단어를 보고 정답·보류·오답과 틀린 부분을 알려 줘요(인터넷 필요, Claude 요금제 안에서 채점). 결과를 보고 돌아와서 같은 버튼을 눌러 기록해요.</div>${quizHtml(d, r)}
+      <h2>퀴즈 · ${(d.quiz||[]).length}개</h2><div class="sub">답을 쓰거나 🎤로 말한 뒤 ‘채점하기’를 누르면 앱이 바로 모범답안과 비교해 정답·보류·오답을 매기고 다른 글자를 보여 줘요(인터넷 없이 동작). 선택형은 고르면 바로 채점돼요.</div>${quizHtml(d, r)}
       <article class="card" style="border-left:4px solid var(--jade)"><b>롤플레이 미션</b><div style="font-size:14px">${esc(d.mission||"")}</div><textarea id="mission" class="zh" rows="3" placeholder="중국어로 써 보세요">${esc(r.mission||"")}</textarea><div class="row"><button class="btn" data-msave>저장</button></div></article>
       <h2>회화 연습</h2><div id="extra"></div>`;
     renderExtra();
@@ -366,16 +409,17 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}a.btn.main{bac
     if ((x = b("[data-mk]"))){
       const id = x.dataset.mk; const r = rec(P().id, S.day); const inp = document.querySelector(`[data-in="${CSS.escape(id)}"]`);
       const prev = r.marks[id] || {}; const ans = inp ? inp.value.trim() : (prev.answer || "");
-      r.marks[id] = { mark: x.dataset.v, answer: ans }; saveRec(P().id, S.day, r);
+      r.marks[id] = Object.assign({}, prev, { mark: x.dataset.v, answer: ans }); saveRec(P().id, S.day, r);
       const g = prog(P(), D()); say(g.complete ? `${S.day}일차 완료!` : "채점을 저장했어요."); return renderDay();
     }
     if ((x = b("[data-mic]"))) return micStart(x.dataset.mic);
     if ((x = b("[data-ai]"))){
-      const id = x.dataset.ai, d = D(), q = d.quiz.find(q => q.id === id); const inp = document.querySelector(`[data-in="${CSS.escape(id)}"]`);
-      const ans = inp ? inp.value.trim() : ""; if (!ans){ e.preventDefault(); return say("먼저 답을 쓰거나 🎤로 말해 주세요."); }
-      const r = rec(P().id, S.day); r.marks[id] = Object.assign({}, r.marks[id], { answer: ans }); saveRec(P().id, S.day, r);
-      x.href = graderUrl(q, d, ans); S.peek["q" + id] = true; setTimeout(renderDay, 500);
-      return;   // 링크가 그대로 열려요
+      const id = x.dataset.ai, q = D().quiz.find(q => q.id === id); const inp = document.querySelector(`[data-in="${CSS.escape(id)}"]`);
+      const ans = inp ? inp.value.trim() : ""; if (!ans) return say("먼저 답을 쓰거나 🎤로 말해 주세요.");
+      const res = autoGrade(q, ans); const r = rec(P().id, S.day);
+      r.marks[id] = { mark: res.verdict, answer: ans, auto: { verdict: res.verdict, score: res.score, msg: res.msg, model: res.model, isPy: res.isPy } }; saveRec(P().id, S.day, r);
+      S.peek["q" + id] = true; const g = prog(P(), D());
+      say(g.complete ? `${S.day}일차 완료!` : `${MARKN[res.verdict]}이에요.`); return renderDay();
     }
     if (b("[data-msave]")){ const r = rec(P().id, S.day); r.mission = $("mission").value.trim(); saveRec(P().id, S.day, r); const g = prog(P(), D()); say(g.complete ? `${S.day}일차 완료!` : "미션을 저장했어요."); return renderDay(); }
     if (b("[data-copy]")){ const ta = $("excode"); ta.select(); ta.setSelectionRange(0, 1e9); let ok = false; try{ ok = document.execCommand("copy"); }catch(e){} if (navigator.clipboard) navigator.clipboard.writeText(ta.value).then(() => say("코드를 복사했어요."), () => say(ok ? "코드를 복사했어요." : "코드를 길게 눌러 복사해 주세요.")); else say(ok ? "코드를 복사했어요." : "코드를 길게 눌러 복사해 주세요."); return; }
